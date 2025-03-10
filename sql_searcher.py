@@ -84,7 +84,9 @@ class SqlSearcher:
             "name": name,
             "category": category,
             "description": description,
-            "path": str(file_path)
+            "path": str(file_path),
+            "created_at": self._get_current_timestamp(),
+            "version": 1
         }
         
         self.metadata["scripts"].append(script_info)
@@ -189,4 +191,109 @@ class SqlSearcher:
                 return True
         
         print(f"Скрипт с названием '{name}' не найден.")
-        return False 
+        return False
+    
+    def search_in_scripts(self, query: str) -> List[Dict]:
+        """
+        Полнотекстовый поиск по содержимому скриптов.
+        
+        Args:
+            query: Поисковый запрос.
+            
+        Returns:
+            List[Dict]: Список скриптов, содержащих запрос.
+        """
+        results = []
+        for script in self.metadata["scripts"]:
+            script_with_content = self._get_script_with_content(script)
+            if query.lower() in script_with_content["content"].lower() or \
+               query.lower() in script_with_content["name"].lower() or \
+               query.lower() in script_with_content["description"].lower():
+                results.append(script_with_content)
+        return results
+    
+    def update_script(self, name: str, new_content: str) -> bool:
+        """
+        Обновляет содержимое скрипта, сохраняя предыдущую версию.
+        
+        Args:
+            name: Название скрипта.
+            new_content: Новое содержимое скрипта.
+            
+        Returns:
+            bool: True, если скрипт успешно обновлен, иначе False.
+        """
+        script = self.find_script_by_name(name)
+        if not script:
+            print(f"Скрипт с названием '{name}' не найден.")
+            return False
+            
+        # Сохраняем предыдущую версию
+        version = script.get("version", 0) + 1
+        history_dir = self.scripts_dir / "_history" / name.replace(' ', '_').lower()
+        history_dir.mkdir(parents=True, exist_ok=True)
+        
+        with open(history_dir / f"v{version-1}.sql", "w", encoding='utf-8') as f:
+            f.write(script["content"])
+            
+        # Обновляем скрипт
+        with open(script["path"], "w", encoding='utf-8') as f:
+            f.write(new_content)
+            
+        # Обновляем метаданные
+        for i, s in enumerate(self.metadata["scripts"]):
+            if s["name"] == name:
+                self.metadata["scripts"][i]["version"] = version
+                self.metadata["scripts"][i]["updated_at"] = self._get_current_timestamp()
+                break
+                
+        self._save_metadata()
+        print(f"Скрипт '{name}' успешно обновлен до версии {version}.")
+        return True
+    
+    def get_script_history(self, name: str) -> List[Dict]:
+        """
+        Получает историю версий скрипта.
+        
+        Args:
+            name: Название скрипта.
+            
+        Returns:
+            List[Dict]: Список версий скрипта.
+        """
+        script = self.find_script_by_name(name)
+        if not script:
+            print(f"Скрипт с названием '{name}' не найден.")
+            return []
+        
+        history_dir = self.scripts_dir / "_history" / name.replace(' ', '_').lower()
+        if not history_dir.exists():
+            print(f"История для скрипта '{name}' не найдена.")
+            return []
+        
+        versions = []
+        for version_file in sorted(history_dir.glob("v*.sql")):
+            version_num = int(version_file.stem[1:])
+            with open(version_file, 'r', encoding='utf-8') as f:
+                content = f.read()
+            
+            versions.append({
+                "version": version_num,
+                "content": content,
+                "path": str(version_file)
+            })
+        
+        # Добавляем текущую версию
+        versions.append({
+            "version": script.get("version", 1),
+            "content": script["content"],
+            "path": script["path"],
+            "current": True
+        })
+        
+        return sorted(versions, key=lambda x: x["version"])
+    
+    def _get_current_timestamp(self) -> str:
+        """Возвращает текущую дату и время в формате ISO."""
+        from datetime import datetime
+        return datetime.now().isoformat() 
