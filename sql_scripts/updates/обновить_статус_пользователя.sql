@@ -1,0 +1,1 @@
+UPDATE users SET status = :new_status WHERE id = :user_id
